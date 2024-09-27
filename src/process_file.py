@@ -1,6 +1,7 @@
 # process_file.py
 from itertools import islice
 import os
+import uuid
 import modal
 from common import app, pip_image, get_openai_client, get_pinecone_index
 import asyncio
@@ -61,7 +62,7 @@ def chunker(seq, batch_size):
 
 async def upsert_to_pinecone(chunks: List[Dict], user_id: str, file_url: str, file_name: str):
     vectors = [{
-        "id": chunk["id"],
+        "id": chunk["id"]+'-text',
         "values": chunk["embedding"],
         "metadata": {
             "userId": user_id,
@@ -77,7 +78,7 @@ async def upsert_to_pinecone(chunks: List[Dict], user_id: str, file_url: str, fi
     try:
         pinecone_index = get_pinecone_index()
         async_results = [
-            pinecone_index.upsert(vectors=chunk, async_req=True)
+            pinecone_index.upsert(vectors=chunk, async_req=True, namespace=user_id)
             for chunk in chunker(vectors, batch_size=100)  # Adjust batch_size as needed
         ]
 
@@ -104,6 +105,41 @@ async def update_file_status(file_id: str, status: str, chunk_count: int):
         async with session.patch(url, headers=headers, data=data) as response:
             if response.status != 204:
                 print(f"Error updating file status: {response.status}")
+
+async def create_file(user_id: str, file_url: str, file_name: str, file_key: str) -> str:
+    
+    file_data = {
+        "id": file_key,
+        "userId": user_id,
+        "url": file_url,
+        "filename": file_name,
+        "chunkCount": 0,  # Initial chunk count
+        "status": "SUCCESS",  # Initial status
+        "hidden": True
+    }
+
+    async with aiohttp.ClientSession() as session:
+        url = f"{os.getenv('SUPABASE_URL')}/rest/v1/File"
+        headers = {
+            "apikey": os.getenv("SUPABASE_API_KEY"),
+            "Authorization": f"Bearer {os.getenv('SUPABASE_API_KEY')}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal"
+        }
+        
+        try:
+            async with session.post(url, headers=headers, json=file_data) as response:
+                if response.status == 201:
+                    print(f"File created successfully: {file_key}")
+                    return file_key
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Failed to create file. Status: {response.status}, Response: {error_text}")
+        except Exception as e:
+            print(f"Error creating file in Supabase: {str(e)}")
+            raise
+
+    return file_key
 
 @app.function(secrets=[modal.Secret.from_name("cea-secret")], image=pip_image, timeout=3600, keep_warm=1)
 async def process_file(file_key: str, user_id: str, file_url: str, file_name: str):
@@ -133,11 +169,7 @@ async def process_file(file_key: str, user_id: str, file_url: str, file_name: st
         # Upsert to Pinecone
         await upsert_to_pinecone(embedded_chunks, user_id, file_url, file_name)
         
-        # Update file status in Supabase
-        await update_file_status(file_key, "SUCCESS", len(embedded_chunks))
-        
-        print(f"File processing completed successfully: {file_key}")
+        print(f"Standard embedding process completed successfully: {file_key}")
     
     except Exception as e:
-        print(f"Error processing file: {str(e)}")
-        await update_file_status(file_key, "ERROR", 0)
+        print(f"Error processing standard embedding file: {str(e)}")

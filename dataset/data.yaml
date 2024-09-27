@@ -1,0 +1,23 @@
+# data.yaml
+
+# Path to your dataset root directory inside the container
+path: ../data/dataset
+
+# Paths to images (relative to 'path')
+train: images/train
+val: images/val
+
+# Paths to annotation files (relative to 'path')
+train_json: annotations/instances_train.json
+val_json: annotations/instances_val.json
+
+# Number of classes
+nc: 5
+
+# Class names (mapping from class indices to names)
+names:
+  0: drawing_number
+  1: detail
+  2: detail_name
+  3: detail_number
+  4: drawing_name
