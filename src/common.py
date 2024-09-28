@@ -38,7 +38,8 @@ pip_image = (
             "pdfminer.six",
             "openai",
             "pinecone-client[grpc]",
-            "aiohttp"
+            "aiohttp",
+            "tenacity"
         ]
     )
 )

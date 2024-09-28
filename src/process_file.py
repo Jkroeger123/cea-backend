@@ -91,6 +91,29 @@ async def upsert_to_pinecone(chunks: List[Dict], user_id: str, file_url: str, fi
         print(f"Error in upserting to Pinecone: {str(e)}")
         raise
 
+async def check_file_exists(user_id: str, filename: str) -> bool:
+    async with aiohttp.ClientSession() as session:
+        url = f"{os.getenv('SUPABASE_URL')}/rest/v1/File"
+        headers = {
+            "apikey": os.getenv("SUPABASE_API_KEY"),
+            "Authorization": f"Bearer {os.getenv('SUPABASE_API_KEY')}",
+        }
+        params = {
+            "userId": f"eq.{user_id}",
+            "filename": f"eq.{filename}",
+            "hidden": f"eq.false",
+            "select": "id"
+        }
+        
+        async with session.get(url, headers=headers, params=params) as response:
+            if response.status == 200:
+                data = await response.json()
+                print(data)
+                return len(data) > 1
+            else:
+                print(f"Error checking file existence: HTTP {response.status}")
+                return False
+
 async def update_file_status(file_id: str, status: str, chunk_count: int):
     async with aiohttp.ClientSession() as session:
         url = f"{os.getenv('SUPABASE_URL')}/rest/v1/File?id=eq.{file_id}"
@@ -141,7 +164,7 @@ async def create_file(user_id: str, file_url: str, file_name: str, file_key: str
 
     return file_key
 
-@app.function(secrets=[modal.Secret.from_name("cea-secret")], image=pip_image, timeout=3600, keep_warm=1)
+@app.function(secrets=[modal.Secret.from_name("cea-secret")], image=pip_image, timeout=86400, keep_warm=1)
 async def process_file(file_key: str, user_id: str, file_url: str, file_name: str):
     try:
         # Download the PDF file
@@ -173,3 +196,4 @@ async def process_file(file_key: str, user_id: str, file_url: str, file_name: st
     
     except Exception as e:
         print(f"Error processing standard embedding file: {str(e)}")
+        raise e

@@ -1,5 +1,6 @@
 #import all functions to deploy
 from modal import web_endpoint
+from fastapi import responses, HTTPException, status
 from process_contruction import process_construction
 from process_file import *
 from common import *
@@ -33,6 +34,12 @@ async def embed_file(item: Dict):
         file_url = item["file_url"]
         file_name = item["file_name"]
         
+        # Check if file already exists
+        file_exists = await check_file_exists(user_id, file_name)
+
+        if file_exists:
+            return responses.JSONResponse(content="This file has already been processed", status_code=status.HTTP_409_CONFLICT)
+            
         # Spawn the process_file functions
         handle_file.spawn(file_key, user_id, file_url, file_name)
         
@@ -42,12 +49,6 @@ async def embed_file(item: Dict):
             "file_key": file_key
         }
     except KeyError as e:
-        return {
-            "status": "error",
-            "message": f"Missing required field: {str(e)}",
-        }, 400
+        return responses.JSONResponse(content=f"Missing required field: {str(e)}", status_code=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"An unexpected error occurred: {str(e)}",
-        }, 500
+        return responses.JSONResponse(content=f"An unexpected error occurred: {str(e)}", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)

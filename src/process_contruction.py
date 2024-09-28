@@ -10,6 +10,7 @@ from typing import List, Dict, Tuple
 import base64
 from io import BytesIO
 import uuid
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from process_file import create_file
 
@@ -17,7 +18,7 @@ with pip_image.imports():
     import fitz  # PyMuPDF
     from PIL import Image
 
-@app.function(secrets=[modal.Secret.from_name("cea-secret")], image=pip_image, timeout=3600, retries=3, concurrency_limit=10)
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def analyze_image_with_gpt4(image: Image.Image, prompt: str) -> str:
     openai_client = get_openai_client()
     
@@ -44,6 +45,7 @@ async def analyze_image_with_gpt4(image: Image.Image, prompt: str) -> str:
         print(f"Error in analyzing image with GPT-4: {str(e)}")
         raise
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def upload_image_chunk(image: Image.Image, file_name: str) -> str:
     buffered = BytesIO()
     image.save(buffered, format="PNG")
@@ -99,7 +101,7 @@ async def upload_image_chunk(image: Image.Image, file_name: str) -> str:
             raise
 
 async def process_chunk(chunk: Image.Image, page_metadata: str, file_key: str, page_num: int, chunk_index: int, chunk_position: str, user_id: str, file_name: str):
-    chunk_description = await analyze_image_with_gpt4.remote.aio(chunk, "Describe the content of this section of a construction document. Focus on visible elements, measurements, and any text present. Any text visible should be included in the output, alongside descriptions of the visual content. If anything is cut off, you can assume / make a best guess at the rest of the text. Be concise - pure information, no extra words or grammar needed.")
+    chunk_description = await analyze_image_with_gpt4(chunk, "Describe the content of this section of a construction document. Focus on visible elements, measurements, and any text present. Any text visible should be included in the output, alongside descriptions of the visual content. If anything is cut off, you can assume / make a best guess at the rest of the text. Be concise - pure information, no extra words or grammar needed.")
     
     full_text = f"{page_metadata}\n\nChunk Description: {chunk_description}"
     
@@ -125,7 +127,7 @@ async def process_chunk(chunk: Image.Image, page_metadata: str, file_key: str, p
         "chunk_image_url": chunk_image_url
     }
 
-@app.function(secrets=[modal.Secret.from_name("cea-secret")], image=pip_image)
+@app.function(secrets=[modal.Secret.from_name("cea-secret")], image=pip_image, timeout=86400)
 async def process_page(page_input: Tuple[int, fitz.Page], file_key: str, user_id: str, file_url: str, file_name: str):
     page_num, total_pages = page_input
     
@@ -141,7 +143,7 @@ async def process_page(page_input: Tuple[int, fitz.Page], file_key: str, user_id
     pix = page.get_pixmap()
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
     
-    page_metadata = await analyze_image_with_gpt4.remote.aio(img, f"Analyze this construction document. This is page {page_num + 1} of {total_pages}. Provide the page ID if visible (make sure to always clarify this content is on page {page_num + 1}, no matter what the page ID says), and a high-level description of the page content. Focus on key elements and their purpose. Assume we know this is a construction document, the high level description should be the scope of the page provided within the full project. Be concise - pure information, no extra words or grammar needed.")
+    page_metadata = await analyze_image_with_gpt4(img, f"Analyze this construction document. This is page {page_num + 1} of {total_pages}. Provide the page ID if visible (make sure to always clarify this content is on page {page_num + 1}, no matter what the page ID says), and a high-level description of the page content. Focus on key elements and their purpose. Assume we know this is a construction document, the high level description should be the scope of the page provided within the full project. Be concise - pure information, no extra words or grammar needed.")
 
     chunk_size = 1024
     overlap = 200
@@ -216,7 +218,7 @@ async def update_file_status(file_id: str, status: str, chunk_count: int):
             if response.status != 204:
                 print(f"Error updating file status: {response.status}")
 
-@app.function(secrets=[modal.Secret.from_name("cea-secret")], image=pip_image, timeout=3600, keep_warm=1)
+@app.function(secrets=[modal.Secret.from_name("cea-secret")], image=pip_image, timeout=86400, keep_warm=1)
 async def process_construction(file_key: str, user_id: str, file_url: str, file_name: str):
     try:
         async with aiohttp.ClientSession() as session:
@@ -239,3 +241,4 @@ async def process_construction(file_key: str, user_id: str, file_url: str, file_
         print(f"Image embedding processing completed successfully: {file_key}")
     except Exception as e:
         print(f"Error image processing file: {str(e)}")
+        raise e
