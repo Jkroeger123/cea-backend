@@ -1,4 +1,5 @@
 # common.py
+import datetime
 import os
 import modal
 
@@ -39,7 +40,8 @@ pip_image = (
             "openai",
             "pinecone-client[grpc]",
             "aiohttp",
-            "tenacity"
+            "tenacity",
+            "newrelic_telemetry_sdk"
         ]
     )
 )
@@ -47,6 +49,7 @@ pip_image = (
 with pip_image.imports():
     from openai import AsyncOpenAI
     from pinecone.grpc import PineconeGRPC as Pinecone
+    from newrelic_telemetry_sdk import Log, LogClient
 
 def get_openai_client():
     openai_org = os.environ["OPENAI_ORG"]
@@ -67,3 +70,13 @@ def get_pinecone_index():
 
     index = pc.Index(host="https://cae-xllq9u8.svc.aped-4627-b74a.pinecone.io")
     return index
+
+
+def log_event(message, attributes, log_type="Info"):
+    log_client = LogClient(os.environ["NEW_RELIC_LICENSE_KEY"])
+    log_entry = Log(
+        message=message,
+        attributes=attributes,
+        timestamp=int(datetime.datetime.now().timestamp())
+    )
+    log_client.send(log_entry)

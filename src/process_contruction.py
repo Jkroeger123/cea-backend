@@ -2,7 +2,7 @@ import math
 import os
 import traceback
 import modal
-from common import app, pip_image, get_openai_client, get_pinecone_index
+from common import app, log_event, pip_image, get_openai_client, get_pinecone_index
 import asyncio
 import aiohttp
 import json
@@ -19,7 +19,7 @@ with pip_image.imports():
     from PIL import Image
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-async def analyze_image_with_gpt4(image: Image.Image, prompt: str) -> str:
+async def analyze_image_with_gpt4(image: Image.Image, prompt: str, user_id: str) -> str:
     openai_client = get_openai_client()
     
     buffered = BytesIO()
@@ -28,7 +28,7 @@ async def analyze_image_with_gpt4(image: Image.Image, prompt: str) -> str:
     
     try:
         response = await openai_client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "user",
@@ -40,6 +40,8 @@ async def analyze_image_with_gpt4(image: Image.Image, prompt: str) -> str:
             ],
             max_tokens=4096,
         )
+        tokens = response.usage.total_tokens
+        log_event(message='Tokens logged', attributes={'tokens': tokens, 'user_id': user_id})
         return response.choices[0].message.content
     except Exception as e:
         print(f"Error in analyzing image with GPT-4: {str(e)}")
@@ -101,7 +103,7 @@ async def upload_image_chunk(image: Image.Image, file_name: str) -> str:
             raise
 
 async def process_chunk(chunk: Image.Image, page_metadata: str, file_key: str, page_num: int, chunk_index: int, chunk_position: str, user_id: str, file_name: str):
-    chunk_description = await analyze_image_with_gpt4(chunk, "Describe the content of this section of a construction document. Focus on visible elements, measurements, and any text present. Any text visible should be included in the output, alongside descriptions of the visual content. If anything is cut off, you can assume / make a best guess at the rest of the text. Be concise - pure information, no extra words or grammar needed.")
+    chunk_description = await analyze_image_with_gpt4(chunk, "Describe the content of this section of a construction document. Focus on visible elements, measurements, and any text present. Any text visible should be included in the output, alongside descriptions of the visual content. If anything is cut off, you can assume / make a best guess at the rest of the text. Be concise - pure information, no extra words or grammar needed.", user_id)
     
     full_text = f"{page_metadata}\n\nChunk Description: {chunk_description}"
     
@@ -143,7 +145,7 @@ async def process_page(page_input: Tuple[int, fitz.Page], file_key: str, user_id
     pix = page.get_pixmap()
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
     
-    page_metadata = await analyze_image_with_gpt4(img, f"Analyze this construction document. This is page {page_num + 1} of {total_pages}. Provide the page ID if visible (make sure to always clarify this content is on page {page_num + 1}, no matter what the page ID says), and a high-level description of the page content. Focus on key elements and their purpose. Assume we know this is a construction document, the high level description should be the scope of the page provided within the full project. Be concise - pure information, no extra words or grammar needed.")
+    page_metadata = await analyze_image_with_gpt4(img, f"Analyze this construction document. This is page {page_num + 1} of {total_pages}. Provide the page ID if visible (make sure to always clarify this content is on page {page_num + 1}, no matter what the page ID says), and a high-level description of the page content. Focus on key elements and their purpose. Assume we know this is a construction document, the high level description should be the scope of the page provided within the full project. Be concise - pure information, no extra words or grammar needed.", user_id)
 
     chunk_size = 1024
     overlap = 200
